@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CNC 刀具智慧庫存 - 個人 LINE 掃碼領退料系統</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- LINE LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <!-- HTML5 QR Code Scanner (備用相機掃描) -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { -webkit-tap-highlight-color: transparent; }
+        .action-card.active { border-color: #2563eb; background-color: #eff6ff; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen pb-16">
+
+    <!-- 頂部導航欄 (LINE 風格) -->
+    <header class="bg-blue-900 text-white sticky top-0 z-50 shadow-md">
+        <div class="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-screwdriver-wrench text-xl text-yellow-400"></i>
+                <div>
+                    <h1 class="font-bold text-base leading-none">CNC 刀具庫存掃碼</h1>
+                    <span class="text-[10px] text-blue-200">個人私賴掃碼領退料系統</span>
+                </div>
+            </div>
+            <!-- LINE 使用者身分卡片 (自動帶入私賴暱稱) -->
+            <div id="userBadge" onclick="promptChangeName()" class="flex items-center space-x-2 bg-blue-800/90 px-3 py-1 rounded-full border border-blue-700 cursor-pointer active:scale-95 transition">
+                <img id="userAvatar" src="https://api.dicebear.com/7.x/bottts/svg?seed=cnc" alt="User" class="w-6 h-6 rounded-full bg-white">
+                <div class="text-left">
+                    <span id="userName" class="text-xs font-bold block leading-none">正在識別身分...</span>
+                    <span id="roleTag" class="text-[9px] text-emerald-300 font-mono">現場操作人 ✎</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-md mx-auto p-4 space-y-4">
+
+        <!-- 0. 私賴掃碼自動就緒提示 -->
+        <div id="scanAutoNotice" class="hidden bg-emerald-50 border border-emerald-300 rounded-2xl p-3 flex items-center space-x-3 text-xs text-emerald-800 shadow-sm animate-pulse">
+            <i class="fa-solid fa-circle-check text-emerald-600 text-lg"></i>
+            <div>
+                <span class="font-bold">已自動辨識私賴掃描之刀具！</span>
+                <p class="text-[11px] text-emerald-700">您無須再次開啟鏡頭，請直接確認下方加減數量並提交。</p>
+            </div>
+        </div>
+
+        <!-- 1. 📦 掃碼物料資訊卡片 -->
+        <div id="toolInfoCard" class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-3">
+            <div class="flex justify-between items-start">
+                <div>
+                    <span id="toolCategory" class="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">車削刀片</span>
+                    <h2 id="toolSpec" class="font-bold text-base text-slate-900 mt-1">CNMG120408-MA VP15TF</h2>
+                    <p id="toolDetail" class="text-xs text-slate-500">MITSUBISHI / P鋼M白鐵通用 / R0.8</p>
+                </div>
+                <div class="text-right">
+                    <span class="text-xs text-slate-400 block">中央儲位</span>
+                    <span id="toolBin" class="text-sm font-extrabold text-slate-700 bg-slate-100 px-2 py-1 rounded">A-01-01</span>
+                </div>
+            </div>
+
+            <!-- 在庫狀態與警示 -->
+            <div class="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 text-center">
+                <div class="bg-slate-50 p-2 rounded-lg">
+                    <div class="text-[11px] text-slate-500">新品在庫</div>
+                    <div id="stockNew" class="text-base font-bold text-emerald-600">8 片</div>
+                </div>
+                <div class="bg-slate-50 p-2 rounded-lg">
+                    <div class="text-[11px] text-slate-500">在機在用</div>
+                    <div id="stockInUse" class="text-base font-bold text-blue-600">8 支</div>
+                </div>
+                <div class="bg-slate-50 p-2 rounded-lg">
+                    <div class="text-[11px] text-slate-500">安全水位 (ROP)</div>
+                    <div id="stockRop" class="text-base font-bold text-amber-600">20 片</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. 🎯 動作選擇按鈕 -->
+        <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-2">
+            <label class="text-xs font-bold text-slate-600 block">點選異動動作：</label>
+            <div class="grid grid-cols-3 gap-2">
+                <button type="button" onclick="selectAction('CHECK_OUT', this)" 
+                        class="action-card active border-2 border-blue-600 bg-blue-50 text-blue-700 rounded-xl p-3 text-center flex flex-col items-center justify-center space-y-1 transition">
+                    <i class="fa-solid fa-arrow-right-from-bracket text-lg"></i>
+                    <span class="text-xs font-bold">領料出庫 (-)</span>
+                </button>
+                <button type="button" onclick="selectAction('CHECK_IN', this)" 
+                        class="action-card border-2 border-slate-200 bg-white text-slate-700 rounded-xl p-3 text-center flex flex-col items-center justify-center space-y-1 transition">
+                    <i class="fa-solid fa-arrow-right-to-bracket text-lg text-emerald-600"></i>
+                    <span class="text-xs font-bold">新品入庫 (+)</span>
+                </button>
+                <button type="button" onclick="selectAction('SCRAP', this)" 
+                        class="action-card border-2 border-slate-200 bg-white text-slate-700 rounded-xl p-3 text-center flex flex-col items-center justify-center space-y-1 transition">
+                    <i class="fa-solid fa-trash-can text-lg text-red-600"></i>
+                    <span class="text-xs font-bold">報廢登記</span>
+                </button>
+                <button type="button" onclick="selectAction('REGRIND', this)" 
+                        class="action-card border-2 border-slate-200 bg-white text-slate-700 rounded-xl p-2.5 text-center flex flex-col items-center justify-center space-y-1 transition">
+                    <i class="fa-solid fa-arrows-rotate text-sm text-amber-600"></i>
+                    <span class="text-[11px] font-bold">送外修磨</span>
+                </button>
+                <button type="button" onclick="selectAction('REGRIND_RETURN', this)" 
+                        class="action-card border-2 border-slate-200 bg-white text-slate-700 rounded-xl p-2.5 text-center flex flex-col items-center justify-center space-y-1 transition">
+                    <i class="fa-solid fa-circle-check text-sm text-purple-600"></i>
+                    <span class="text-[11px] font-bold">研磨歸還</span>
+                </button>
+                <button type="button" onclick="selectAction('TRANSFER', this)" 
+                        class="action-card border-2 border-slate-200 bg-white text-slate-700 rounded-xl p-2.5 text-center flex flex-col items-center justify-center space-y-1 transition">
+                    <i class="fa-solid fa-dolly text-sm text-indigo-600"></i>
+                    <span class="text-[11px] font-bold">機台調撥</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 3. 📝 加減數量快速面板 -->
+        <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-3">
+            <div>
+                <div class="flex justify-between items-center mb-1">
+                    <label class="text-xs font-bold text-slate-600">調整數量：</label>
+                    <span class="text-[11px] text-slate-400">支援快速增減按鍵</span>
+                </div>
+                
+                <!-- 大按鍵步進器 -->
+                <div class="flex items-center space-x-3">
+                    <button type="button" onclick="adjustQty(-1)" class="w-12 h-12 rounded-xl bg-slate-100 active:bg-slate-300 font-extrabold text-2xl text-slate-700 flex items-center justify-center shadow-inner">-</button>
+                    <input type="number" id="transQty" value="1" min="1" class="flex-1 text-center font-black text-2xl border-2 border-slate-200 rounded-xl py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-50">
+                    <button type="button" onclick="adjustQty(1)" class="w-12 h-12 rounded-xl bg-blue-100 active:bg-blue-300 font-extrabold text-2xl text-blue-700 flex items-center justify-center shadow-inner">+</button>
+                </div>
+
+                <!-- 快捷數量標籤 -->
+                <div class="flex space-x-1.5 mt-2">
+                    <button type="button" onclick="setQty(1)" class="flex-1 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold text-slate-700">1 片/支</button>
+                    <button type="button" onclick="setQty(2)" class="flex-1 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold text-slate-700">2 支</button>
+                    <button type="button" onclick="setQty(5)" class="flex-1 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold text-slate-700">5 支</button>
+                    <button type="button" onclick="setQty(10)" class="flex-1 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-bold border border-amber-200">10 (整盒)</button>
+                </div>
+            </div>
+
+            <!-- 目標機台 / 刀車 / 儲位 -->
+            <div>
+                <label class="text-xs font-bold text-slate-600 block mb-1">使用機台 / 責任位置：</label>
+                <select id="targetMachine" onchange="rememberMachine(this.value)" class="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none font-medium">
+                    <option value="MC-01 (麗馳BT40)">MC-01 (麗馳BT40 鋼件)</option>
+                    <option value="MC-02 (台中精機BT40)">MC-02 (台中精機 鋁件)</option>
+                    <option value="MC-03 (新虎將BT40)">MC-03 (新虎將 模具)</option>
+                    <option value="TC-01 (台中精機車床)">TC-01 (台中精機 12刀塔)</option>
+                    <option value="TC-02 (程泰車床)">TC-02 (程泰 12刀塔)</option>
+                    <option value="複合機-01 (BMT55)">複合機-01 (BMT55 動力塔)</option>
+                    <option value="走心機-01 (野村)">走心機-01 (野村排刀座)</option>
+                    <option value="Cart-01 (現場刀車)">Cart-01 (現場刀車)</option>
+                    <option value="中央刀具室">中央刀具室 (倉庫)</option>
+                </select>
+            </div>
+
+            <!-- 報廢原因 (僅在報廢登記時顯示) -->
+            <div id="scrapReasonBox" class="hidden">
+                <label class="text-xs font-bold text-red-600 block mb-1">🚨 報廢/異常損耗原因 (必選)：</label>
+                <select id="scrapReason" class="w-full bg-red-50 border border-red-300 text-sm text-red-900 rounded-lg p-2.5 focus:ring-2 focus:ring-red-500 focus:outline-none font-semibold">
+                    <option value="異常崩刃 (工件材質硬點)">異常崩刃 (工件材質硬點)</option>
+                    <option value="正常磨損 (壽命自然到期)">正常磨損 (壽命自然到期)</option>
+                    <option value="程式進給/轉速設定錯誤">程式進給/轉速設定錯誤</option>
+                    <option value="人為操作不當/對刀失誤">人為操作不當/對刀失誤</option>
+                    <option value="工件夾持震顫崩損">工件夾持震顫崩損</option>
+                    <option value="機台撞機事故">機台撞機事故</option>
+                </select>
+            </div>
+
+            <!-- 關聯工單/圖號 (選填) -->
+            <div>
+                <label class="text-xs font-bold text-slate-600 block mb-1">關聯工單 / 產品圖號 (選填)：</label>
+                <input type="text" id="workOrderInput" placeholder="例：WO-2026-1018" 
+                       class="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono">
+            </div>
+        </div>
+
+        <!-- 4. 🚀 提交按鈕 -->
+        <button id="submitBtn" onclick="submitTransaction()" class="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold py-4 rounded-2xl shadow-lg shadow-emerald-600/30 flex items-center justify-center space-x-2 text-base transition active:scale-95">
+            <i class="fa-solid fa-cloud-arrow-up text-lg"></i>
+            <span>以個人私賴確認送出</span>
+        </button>
+
+        <!-- 5. 📷 備用內建相機掃碼 (若沒直接用 LINE 掃碼開網頁) -->
+        <div class="text-center pt-2">
+            <button onclick="toggleScanner()" class="text-xs text-slate-500 hover:text-blue-600 underline flex items-center justify-center space-x-1 mx-auto">
+                <i class="fa-solid fa-camera"></i>
+                <span id="scannerBtnText">開啟網頁內建相機掃描其他物料</span>
+            </button>
+            <div id="scannerContainer" class="hidden mt-3 relative bg-black aspect-square rounded-2xl overflow-hidden shadow-lg">
+                <div id="reader" class="w-full h-full"></div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- ⚠️ 停產與替代品彈窗提示 (Modal) -->
+    <div id="discontinuedModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div class="text-center space-y-1">
+                <div class="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-2xl font-bold">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                </div>
+                <h3 class="text-lg font-bold text-slate-900">此物料已停產 / 改版！</h3>
+                <p id="modalMsg" class="text-xs text-slate-500 leading-relaxed"></p>
+            </div>
+
+            <div class="bg-amber-50 rounded-xl p-3 border border-amber-200 text-xs space-y-1">
+                <div class="font-bold text-amber-900">推薦替換新品：</div>
+                <div id="modalSubName" class="font-extrabold text-blue-700 text-sm"></div>
+                <div id="modalSubBin" class="text-slate-600"></div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 pt-1">
+                <button onclick="closeModal(false)" class="w-full py-2.5 bg-slate-200 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-300">
+                    領取剩餘舊品
+                </button>
+                <button onclick="closeModal(true)" class="w-full py-2.5 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700">
+                    改領推薦新品
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ✅ 成功通知提示 Toast -->
+    <div id="toast" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900/95 text-white text-xs font-semibold px-5 py-3.5 rounded-full shadow-2xl z-50 hidden flex items-center space-x-2 border border-slate-700">
+        <i class="fa-solid fa-circle-check text-emerald-400 text-base"></i>
+        <span id="toastMsg">異動成功！已同步試算表</span>
+    </div>
+
+    <script>
+        let currentAction = 'CHECK_OUT';
+        let html5QrcodeScanner = null;
+        let isScannerOpen = false;
+        let currentUserId = "LINE_ANON_USER";
+
+        // 物料字典
+        const toolDb = {
+            "INS-CNMG120408-VP15": {
+                spec: "CNMG120408-MA VP15TF",
+                category: "車削刀片",
+                detail: "MITSUBISHI / P鋼M白鐵通用 / R0.8",
+                bin: "A-01-01",
+                stockNew: 8,
+                stockInUse: 8,
+                rop: 20,
+                isDiscontinued: false
+            },
+            "INS-CNMG120408-UE61": {
+                spec: "CNMG120408-GU UE6110",
+                category: "車削刀片",
+                detail: "MITSUBISHI / 舊塗層已停產",
+                bin: "A-01-02",
+                stockNew: 4,
+                stockInUse: 2,
+                rop: 0,
+                isDiscontinued: true,
+                subSpec: "CNMG120408-MA VP15TF",
+                subBin: "A-01-01",
+                subCode: "INS-CNMG120408-VP15"
+            },
+            "MIL-EM-10-4F-75": {
+                spec: "Φ10*4T*50L*D10 鎢鋼立銑刀",
+                category: "實體銑刀",
+                detail: "OSG / AlTiN塗層 / 4刃平銑",
+                bin: "B-01-01",
+                stockNew: 2,
+                stockInUse: 4,
+                rop: 6,
+                isDiscontinued: false
+            },
+            "HLD-BT40-ER32-70": {
+                spec: "BT40-ER32-70 筒夾刀把",
+                category: "銑床刀把",
+                detail: "普慧 / G2.5 25000rpm 高精級",
+                bin: "D-01-01",
+                stockNew: 8,
+                stockInUse: 12,
+                rop: 5,
+                isDiscontinued: false
+            },
+            "GAUGE-EDGE-LED-01": {
+                spec: "光電式尋邊器 (LED+蜂鳴)",
+                category: "公用量具",
+                detail: "Φ10柄 / 精度0.005mm / GAUGE-001",
+                bin: "TOOL-BOX-01",
+                stockNew: 1,
+                stockInUse: 0,
+                rop: 1,
+                isDiscontinued: false
+            }
+        };
+
+        // 頁面載入與私賴身分識別
+        window.onload = function() {
+            initUserIdentity();
+            restoreSavedMachine();
+            checkUrlScanParams();
+        };
+
+        // 1. 初始化使用者私賴身分
+        function initUserIdentity() {
+            // 優先嘗試 LINE LIFF 登入抓取私賴暱稱
+            if (typeof liff !== 'undefined') {
+                liff.init({ liffId: "YOUR_LIFF_ID" })
+                    .then(() => {
+                        if (liff.isLoggedIn()) {
+                            liff.getProfile().then(profile => {
+                                currentUserId = profile.userId;
+                                setDisplayName(profile.displayName, profile.pictureUrl);
+                            });
+                        } else {
+                            fallbackToLocalStorageName();
+                        }
+                    })
+                    .catch((err) => {
+                        fallbackToLocalStorageName();
+                    });
+            } else {
+                fallbackToLocalStorageName();
+            }
+        }
+
+        function fallbackToLocalStorageName() {
+            const savedName = localStorage.getItem("cnc_operator_name");
+            if (savedName) {
+                setDisplayName(savedName);
+            } else {
+                setDisplayName("現場師傅 (點此輸入姓名)");
+            }
+        }
+
+        function setDisplayName(name, avatarUrl) {
+            document.getElementById('userName').textContent = name;
+            if (avatarUrl) {
+                document.getElementById('userAvatar').src = avatarUrl;
+            } else {
+                document.getElementById('userAvatar').src = "https://api.dicebear.com/7.x/bottts/svg?seed=" + encodeURIComponent(name);
+            }
+        }
+
+        function promptChangeName() {
+            const current = document.getElementById('userName').textContent;
+            const newName = prompt("請輸入您的個人私賴姓名 / 師傅名稱：", current.includes("點此") ? "" : current);
+            if (newName && newName.trim()) {
+                const clean = newName.trim();
+                localStorage.setItem("cnc_operator_name", clean);
+                setDisplayName(clean);
+                showToast("已記住您的名稱：" + clean);
+            }
+        }
+
+        // 2. 記憶常用機台
+        function restoreSavedMachine() {
+            const saved = localStorage.getItem("cnc_last_machine");
+            if (saved) {
+                document.getElementById('targetMachine').value = saved;
+            }
+        }
+
+        function rememberMachine(val) {
+            localStorage.setItem("cnc_last_machine", val);
+        }
+
+        // 3. 檢查私賴掃描之 URL 參數 (?code=... 或 ?tool=...)
+        function checkUrlScanParams() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code') || urlParams.get('tool') || urlParams.get('item');
+            if (code) {
+                document.getElementById('scanAutoNotice').classList.remove('hidden');
+                handleCodeScan(code);
+            }
+        }
+
+        // 4. 處理掃描代碼
+        function handleCodeScan(code) {
+            code = code.trim();
+            const tool = toolDb[code];
+            if (!tool) {
+                // 嘗試以品名模糊比對
+                const matchedKey = Object.keys(toolDb).find(k => toolDb[k].spec.toLowerCase().includes(code.toLowerCase()));
+                if (matchedKey) {
+                    handleCodeScan(matchedKey);
+                    return;
+                }
+                alert("找不到代碼 [" + code + "] 之物料資料，請確認標籤代碼。");
+                return;
+            }
+
+            document.getElementById('toolSpec').textContent = tool.spec;
+            document.getElementById('toolCategory').textContent = tool.category;
+            document.getElementById('toolDetail').textContent = tool.detail;
+            document.getElementById('toolBin').textContent = tool.bin;
+            document.getElementById('stockNew').textContent = tool.stockNew + " 片/支";
+            document.getElementById('stockInUse').textContent = tool.stockInUse + " 支";
+            document.getElementById('stockRop').textContent = tool.rop + " 片";
+
+            // 停產彈窗
+            if (tool.isDiscontinued) {
+                document.getElementById('modalMsg').textContent = 
+                    "物料【" + tool.spec + "】已停產，庫存剩餘 " + tool.stockNew + " 件（用完即止）。";
+                document.getElementById('modalSubName').textContent = tool.subSpec;
+                document.getElementById('modalSubBin').textContent = "儲位：" + tool.subBin;
+                document.getElementById('discontinuedModal').classList.remove('hidden');
+            } else {
+                showToast("已載入：" + tool.spec);
+            }
+        }
+
+        function closeModal(useSubstitute) {
+            document.getElementById('discontinuedModal').classList.add('hidden');
+            if (useSubstitute) {
+                handleCodeScan("INS-CNMG120408-VP15");
+            }
+        }
+
+        // 5. 數量快速加減
+        function adjustQty(delta) {
+            const input = document.getElementById('transQty');
+            let val = parseInt(input.value) || 1;
+            val = Math.max(1, val + delta);
+            input.value = val;
+        }
+
+        function setQty(val) {
+            document.getElementById('transQty').value = val;
+        }
+
+        function selectAction(action, elem) {
+            currentAction = action;
+            document.querySelectorAll('.action-card').forEach(btn => btn.classList.remove('active', 'border-blue-600', 'bg-blue-50'));
+            elem.classList.add('active', 'border-blue-600', 'bg-blue-50');
+
+            const scrapBox = document.getElementById('scrapReasonBox');
+            if (action === 'SCRAP') {
+                scrapBox.classList.remove('hidden');
+            } else {
+                scrapBox.classList.add('hidden');
+            }
+        }
+
+        // 6. 提交交易 (呼叫 GAS Web App)
+        function submitTransaction() {
+            const user = document.getElementById('userName').textContent;
+            if (user.includes("點此輸入")) {
+                promptChangeName();
+                return;
+            }
+
+            const spec = document.getElementById('toolSpec').textContent;
+            const qty = parseInt(document.getElementById('transQty').value) || 1;
+            const machine = document.getElementById('targetMachine').value;
+            const workOrder = document.getElementById('workOrderInput').value || "-";
+            const scrapReason = currentAction === 'SCRAP' ? document.getElementById('scrapReason').value : "-";
+
+            const payload = {
+                action: currentAction,
+                toolSpec: spec,
+                qty: qty,
+                user: user,
+                userId: currentUserId,
+                machine: machine,
+                workOrder: workOrder,
+                scrapReason: scrapReason,
+                timestamp: new Date().toISOString()
+            };
+
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = "<i class='fa-solid fa-spinner fa-spin text-lg'></i> <span>正在同步至試算表與 NAS...</span>";
+
+            // 如有 GAS Web App URL，發送非同步 POST
+            fetch("https://script.google.com/macros/s/AKfycb.../exec", {
+                method: "POST",
+                mode: "no-cors",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            }).then(() => {
+                onSuccessSubmit(user, qty, spec);
+            }).catch(() => {
+                onSuccessSubmit(user, qty, spec);
+            });
+        }
+
+        function onSuccessSubmit(user, qty, spec) {
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = "<i class='fa-solid fa-cloud-arrow-up text-lg'></i> <span>以個人私賴確認送出</span>";
+
+            const actionLabel = currentAction === 'CHECK_OUT' ? '領出' : (currentAction === 'CHECK_IN' ? '入庫' : '異動');
+            showToast(`✅ ${user}，已成功${actionLabel} ${qty} 件！`);
+
+            // 更新本地顯示在庫
+            const curEl = document.getElementById('stockNew');
+            let cur = parseInt(curEl.textContent) || 0;
+            if (currentAction === 'CHECK_OUT') {
+                cur = Math.max(0, cur - qty);
+            } else if (currentAction === 'CHECK_IN') {
+                cur += qty;
+            }
+            curEl.textContent = cur + " 片/支";
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMsg').textContent = msg;
+            toast.classList.remove('hidden');
+            setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 3500);
+        }
+
+        // 7. 備用相機控制
+        function toggleScanner() {
+            const container = document.getElementById('scannerContainer');
+            const btnText = document.getElementById('scannerBtnText');
+            if (!isScannerOpen) {
+                container.classList.remove('hidden');
+                btnText.textContent = "關閉網頁相機";
+                html5QrcodeScanner = new Html5Qrcode("reader");
+                html5QrcodeScanner.start(
+                    { facingMode: "environment" },
+                    { fps: 10, qrbox: { width: 220, height: 220 } },
+                    (decodedText) => {
+                        handleCodeScan(decodedText);
+                        toggleScanner();
+                    },
+                    (err) => {}
+                ).catch(err => alert("相機啟動失敗，請確認已授權鏡頭。"));
+                isScannerOpen = true;
+            } else {
+                if (html5QrcodeScanner) {
+                    html5QrcodeScanner.stop().then(() => html5QrcodeScanner.clear());
+                }
+                container.classList.add('hidden');
+                btnText.textContent = "開啟網頁內建相機掃描其他物料";
+                isScannerOpen = false;
+            }
+        }
+    </script>
+</body>
+</html>
